@@ -494,7 +494,7 @@ bool SX1276Radio::ReceiveMessage(byte buffer[], byte size, byte& received, bool&
   DEBUG("hdrcnt=%d pktcnt=%d\n\r", (unsigned)headerCount, (unsigned)packetCount);
 
   // check CRC ...
-  if ((flags & (1 << 5)) == 1) {
+  if (!!(flags & (1 << 5))) {
     DEBUG("CRC Error. Packet rssi=%ddBm snr=%d cr=4/%d\n\r", rssi_packet, snr_packet, coding_rate);
     crc_error = true;
     return false;
