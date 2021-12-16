@@ -200,8 +200,17 @@ bool SX1276Radio::Begin()
   // because we forgot to shift the CR. Which also explains why we never get CRC errors!
   // because implicit header could have been on
   // 125kHz, 4/6, explicit header
-  v = (BandwidthToBitfield(bandwidth_hz_) << 4) | (CodingRateToBitfield(coding_rate_) << 1) | 0x0;
+  const byte bwb = BandwidthToBitfield(bandwidth_hz_);
+  v = (bwb << 4) | (CodingRateToBitfield(coding_rate_) << 1) | 0x0;
   WriteRegister(SX1276REG_ModemConfig1, v);
+
+  // Errata - sensitivity optimisation
+  if (bwb == SX1276_LORA_BW_500000) {
+    WriteRegister(SX1276REG_RegSeqConfig1, 0x02);
+    WriteRegister(SX1276REG_RegTimer2Coef, 0x64);
+  } else {
+    WriteRegister(SX1276REG_RegSeqConfig1, 0x03);
+  }
 
   // SF9, normal (not continuous) mode, CRC, and upper 2 bits of symbol timeout (maximum i.e. 1023)
   // We use 255, or 255 x (2^9)/125000 or ~1 second
@@ -421,6 +430,7 @@ bool SX1276Radio::ReceiveMessage(byte buffer[], byte size, byte& received, bool&
 
   WriteRegister(SX1276REG_IrqFlags, 0xff); // note, this one cant be verified; clears on 0xff write
 
+  bool isSingleMode = true;
   WriteRegister(SX1276REG_OpMode, 0x86); // RX Single mode
 
   // Now we block, until symbol timeout or we get a message
@@ -483,8 +493,10 @@ bool SX1276Radio::ReceiveMessage(byte buffer[], byte size, byte& received, bool&
   ReadRegister(SX1276REG_FifoRxNbBytes, payloadSizeBytes);
   ReadRegister(SX1276REG_RxHeaderCntValueMsb, v); headerCount = (uint16_t)v << 8;
   ReadRegister(SX1276REG_RxHeaderCntValueLsb, v); headerCount |= v;
-  ReadRegister(SX1276REG_RxPacketCntValueMsb, v); packetCount = (uint16_t)v << 8;
-  ReadRegister(SX1276REG_RxPacketCntValueLsb, v); packetCount |= v;
+  if (!isSingleMode) {
+    ReadRegister(SX1276REG_RxPacketCntValueMsb, v); packetCount = (uint16_t)v << 8;
+    ReadRegister(SX1276REG_RxPacketCntValueLsb, v); packetCount |= v;
+  }
   // Note: SX1276REG_FifoRxByteAddrPtr == last addr written by modem
   ReadRegister(SX1276REG_FifoRxByteAddrPtr, byptr);
 

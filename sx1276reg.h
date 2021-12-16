@@ -39,8 +39,8 @@
 #define SX1276REG_FifoRxNbBytes     0x13
 #define SX1276REG_RxHeaderCntValueMsb  0x14
 #define SX1276REG_RxHeaderCntValueLsb  0x15
-#define SX1276REG_RxPacketCntValueMsb  0x16
-#define SX1276REG_RxPacketCntValueLsb  0x17
+#define SX1276REG_RxPacketCntValueMsb  0x16 // ERRATA - non-functional in single mode
+#define SX1276REG_RxPacketCntValueLsb  0x17 // ERRATA - non-functional in single mode
 #define SX1276REG_ModemStat         0x18
 #define SX1276REG_PacketSnr         0x19
 #define SX1276REG_PacketRssi        0x1A
@@ -53,10 +53,13 @@
 #define SX1276REG_PayloadLength     0x22
 #define SX1276REG_MaxPayloadLength  0x23
 #define SX1276REG_FifoRxByteAddrPtr 0x25
+#define SX1276REG_RegSeqConfig1     0x36 // BW500 errata
+#define SX1276REG_RegSeqConfig2     0x37
+#define SX1276REG_RegTimer2Coef     0x3A // BW500 errata
 #define SX1276REG_DioMapping1       0x40
 #define SX1276REG_DioMapping2       0x41
 #define SX1276REG_Version           0x42
-#define SX1276REG_PaDac             0x4d
+#define SX1276REG_PaDac             0x4D
 
 // Bandwidth settings, for bits 4-7 of ModemConfig1
 #define SX1276_LORA_CODING_RATE_4_5 0x01
