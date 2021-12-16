@@ -432,6 +432,7 @@ bool SX1276Radio::ReceiveMessage(byte buffer[], byte size, byte& received, bool&
   bool symbol_timeout = false;
   crc_error = false;
   byte flags = 0;
+  byte stepping = 0;
   do {
     flags = 0;
     ReadRegister(SX1276REG_IrqFlags, flags);
@@ -443,7 +444,12 @@ bool SX1276Radio::ReceiveMessage(byte buffer[], byte size, byte& received, bool&
       break;
     }
     symbol_timeout = flags & (1 << 7);
-    if (!symbol_timeout) { yield(); }
+    if (!symbol_timeout) {
+      if (++stepping >= 2) {
+        stepping = 0;
+        yield();
+      }
+    }
   } while (!symbol_timeout);
 
   byte v = 0;
