@@ -175,7 +175,7 @@ bool SX1276Radio::Begin()
 {
   byte v;
 
-  // Sleep Mode from any unkown mode: clear lower bits
+  // Sleep Mode from any unknown mode: clear lower bits
   ReadRegister(SX1276REG_OpMode, v);
   WriteRegister(SX1276REG_OpMode, v & 0xf8, true);
 
