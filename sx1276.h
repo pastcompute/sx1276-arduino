@@ -54,8 +54,13 @@ public:
   /// Set the carrier frequency
   void SetCarrier(uint32_t carrier_hz);
 
-  /// Set the spreading factor - for now, ignored unless called before begin()
-  void SetSpreadingFactor(byte sf);
+  /// Set the spreading factor
+  /// 6 --> 64 chips/symbol through 12 --> 4096 chips/symbol
+  /// ie chips/symbol = 2^sf
+  /// at reset is 7 (128)
+  /// invalid values are forced to 7
+  byte SetSpreadingFactor(byte sf);
+  byte GetSpreadingFactor() const { return spreading_factor_; }
 
   /// Get RSSi of last receive
   int GetLastRssi() const { return rssi_dbm_; }

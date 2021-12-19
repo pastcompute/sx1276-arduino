@@ -214,7 +214,7 @@ bool SX1276Radio::Begin()
 
   // SF9, normal (not continuous) mode, CRC, and upper 2 bits of symbol timeout (maximum i.e. 1023)
   // We use 255, or 255 x (2^9)/125000 or ~1 second
-  v = (spreading_factor_ << 4) | (0 << 3)| (1 << 2) | ((symbol_timeout_ >> 8) & 0x03);
+  v = (spreading_factor_ << 4) | (0 << SX1276_BITSHIFT_TX_CONTINUOUS_MODE)| (1 << SX1276_BITSHIFT_RX_PAYLOAD_CRC_ON) | ((symbol_timeout_ >> 8) & 0x03);
   WriteRegister(SX1276REG_ModemConfig2, v);
   v = symbol_timeout_ & 0xff;
   WriteRegister(SX1276REG_SymbTimeoutLsb, v);
@@ -258,8 +258,17 @@ void SX1276Radio::ReadCarrier(uint32_t& carrier_hz)
 }
 
 ICACHE_FLASH_ATTR
-void SX1276Radio::SetSpreadingFactor(byte sf) {
+byte SX1276Radio::SetSpreadingFactor(byte sf) {
+  if (sf < 6) { sf = 7; }
+  if (sf > 12) { sf = 7; }
   spreading_factor_ = sf;
+
+  byte v = (spreading_factor_ << 4) | (0 << SX1276_BITSHIFT_TX_CONTINUOUS_MODE)| (1 << SX1276_BITSHIFT_RX_PAYLOAD_CRC_ON) | ((symbol_timeout_ >> 8) & 0x03);
+  WriteRegister(SX1276REG_ModemConfig2, v);
+  v = symbol_timeout_ & 0xff;
+  WriteRegister(SX1276REG_SymbTimeoutLsb, v);
+
+  return spreading_factor_;
 }
 
 
