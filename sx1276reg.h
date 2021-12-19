@@ -77,6 +77,8 @@
 #define SX1276_LORA_BW_125000  0x7
 #define SX1276_LORA_BW_250000  0x8
 #define SX1276_LORA_BW_500000  0x9
+#define SX1276_LORA_BW_MIN 0
+#define SX1276_LORA_BW_MAX 9
 
 #define SX1276_LORA_LNA_GAIN_G1 0x1  // highest gain
 #define SX1276_LORA_LNA_GAIN_G2 0x2  // highest gain - 6dB

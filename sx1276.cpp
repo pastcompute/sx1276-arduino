@@ -84,7 +84,7 @@ inline unsigned BitfieldToBandwidth(byte bitfield)
     BW_FR_SWITCH(125000);
     BW_FR_SWITCH(250000);
     BW_FR_SWITCH(500000);
-    return 0;
+    default: return 0;
   }
 }
 
@@ -111,6 +111,7 @@ SX1276Radio::SX1276Radio(int cs_pin, const SPISettings& spi_settings)
     max_tx_payload_bytes_(0x80),
     max_rx_payload_bytes_(0x80),
     bandwidth_hz_(DEFAULT_BW_HZ),
+    bandwidth_idx_(0xff),
     spreading_factor_(DEFAULT_SPREADING_FACTOR),
     coding_rate_(DEFAULT_CODING_RATE),
     rssi_dbm_(-255),
@@ -171,6 +172,26 @@ byte SX1276Radio::ReadVersion()
 }
 
 ICACHE_FLASH_ATTR
+void SX1276Radio::ConfigureBandwidth() {
+  // IMPORTANT: Testing of 2015-09-13 was accidentally done using 4/5
+  // because we forgot to shift the CR. Which also explains why we never get CRC errors!
+  // because implicit header could have been on
+  // 125kHz, 4/6, explicit header
+  const byte bwb = BandwidthToBitfield(bandwidth_hz_);
+  byte v = (bwb << 4) | (CodingRateToBitfield(coding_rate_) << 1) | 0x0;
+  WriteRegister(SX1276REG_ModemConfig1, v);
+  bandwidth_idx_ = bwb;
+
+  // Errata - sensitivity optimisation
+  if (bwb == SX1276_LORA_BW_500000) {
+    WriteRegister(SX1276REG_RegSeqConfig1, 0x02);
+    WriteRegister(SX1276REG_RegTimer2Coef, 0x64);
+  } else {
+    WriteRegister(SX1276REG_RegSeqConfig1, 0x03);
+  }
+}
+
+ICACHE_FLASH_ATTR
 bool SX1276Radio::Begin()
 {
   byte v;
@@ -196,21 +217,7 @@ bool SX1276Radio::Begin()
   }
   dead_ = false;
 
-  // IMPORTANT: Testing of 2015-09-13 was accidentally done using 4/5
-  // because we forgot to shift the CR. Which also explains why we never get CRC errors!
-  // because implicit header could have been on
-  // 125kHz, 4/6, explicit header
-  const byte bwb = BandwidthToBitfield(bandwidth_hz_);
-  v = (bwb << 4) | (CodingRateToBitfield(coding_rate_) << 1) | 0x0;
-  WriteRegister(SX1276REG_ModemConfig1, v);
-
-  // Errata - sensitivity optimisation
-  if (bwb == SX1276_LORA_BW_500000) {
-    WriteRegister(SX1276REG_RegSeqConfig1, 0x02);
-    WriteRegister(SX1276REG_RegTimer2Coef, 0x64);
-  } else {
-    WriteRegister(SX1276REG_RegSeqConfig1, 0x03);
-  }
+  ConfigureBandwidth();
 
   // SF9, normal (not continuous) mode, CRC, and upper 2 bits of symbol timeout (maximum i.e. 1023)
   // We use 255, or 255 x (2^9)/125000 or ~1 second
@@ -257,6 +264,16 @@ void SX1276Radio::ReadCarrier(uint32_t& carrier_hz)
   carrier_hz = actual_hz;
 }
 
+void SX1276Radio::ReadBandwidth(uint32_t& bandwidth_hz)
+{
+  byte v;
+  ReadRegister(SX1276REG_ModemConfig1, v);
+  v = ((v >> 4) & 0x0f);
+  bandwidth_hz = BitfieldToBandwidth(v);
+  bandwidth_idx_ = v;
+}
+
+
 ICACHE_FLASH_ATTR
 byte SX1276Radio::SetSpreadingFactor(byte sf) {
   if (sf < 6) { sf = 7; }
@@ -271,6 +288,17 @@ byte SX1276Radio::SetSpreadingFactor(byte sf) {
   return spreading_factor_;
 }
 
+ICACHE_FLASH_ATTR
+uint32_t SX1276Radio::SetBandwidth(byte bwIndex) {
+  uint32_t bw = BitfieldToBandwidth(bwIndex);
+  if (bw == 0) {
+    bwIndex = SX1276_LORA_BW_125000;
+    bw = BitfieldToBandwidth(bwIndex);
+  }
+  bandwidth_hz_ = bw;
+  ConfigureBandwidth();
+  return bandwidth_hz_;
+}
 
 ICACHE_FLASH_ATTR
 void SX1276Radio::SetCarrier(uint32_t carrier_hz)
