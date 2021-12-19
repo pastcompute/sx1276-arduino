@@ -54,6 +54,9 @@ public:
   /// Set the carrier frequency
   void SetCarrier(uint32_t carrier_hz);
 
+  /// Set the spreading factor - for now, ignored unless called before begin()
+  void SetSpreadingFactor(byte sf);
+
   /// Get RSSi of last receive
   int GetLastRssi() const { return rssi_dbm_; }
 

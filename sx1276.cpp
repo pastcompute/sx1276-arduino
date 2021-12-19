@@ -258,6 +258,12 @@ void SX1276Radio::ReadCarrier(uint32_t& carrier_hz)
 }
 
 ICACHE_FLASH_ATTR
+void SX1276Radio::SetSpreadingFactor(byte sf) {
+  spreading_factor_ = sf;
+}
+
+
+ICACHE_FLASH_ATTR
 void SX1276Radio::SetCarrier(uint32_t carrier_hz)
 {
   rx_warm_ = false;
