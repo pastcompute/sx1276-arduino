@@ -34,6 +34,8 @@
 class SX1276Radio
 {
 public:
+  typedef void (*rxPollFunction_t)(bool& abort);
+
   SX1276Radio(int cs_pin, const SPISettings& spi_settings);
 
   /// Revert to Standby mode and return all settings to a useful default
@@ -101,6 +103,7 @@ public:
   /// @return false if timeout or crc error
   bool ReceiveMessage(byte buffer[], byte size, byte& received, bool& crc_error);
 
+  void SetReceivePollCallback(rxPollFunction_t cbk) { rxPollFunction = cbk; }
 
   bool fault() const { return dead_; }
 
@@ -132,6 +135,8 @@ private:
   int rx_snr_db_;
   bool rx_warm_;
   bool dead_;
+
+  rxPollFunction_t rxPollFunction;
 };
 
 #endif //SX1276_H__

@@ -117,7 +117,8 @@ SX1276Radio::SX1276Radio(int cs_pin, const SPISettings& spi_settings)
     rssi_dbm_(-255),
     rx_snr_db_(-255),
     rx_warm_(false),
-    dead_(true)
+    dead_(true),
+    rxPollFunction(NULL)
 {
   // Note; we want DEBUG ( Serial) here because this happens before Serial is initialised,
   // and it hangs the ESP8266
@@ -479,12 +480,14 @@ bool SX1276Radio::ReceiveMessage(byte buffer[], byte size, byte& received, bool&
   // Now we block, until symbol timeout or we get a message
   // Which in practice means polling the IRQ flags
   // and for the purpose of the ESP8266, we need to yield occasionally
+  // optional callback to allow serial port processing without appearing to hang
 
   bool done = false;
   bool symbol_timeout = false;
   crc_error = false;
   byte flags = 0;
   byte stepping = 0;
+  bool shouldAbort = false;
   do {
     flags = 0;
     ReadRegister(SX1276REG_IrqFlags, flags);
@@ -497,12 +500,13 @@ bool SX1276Radio::ReceiveMessage(byte buffer[], byte size, byte& received, bool&
     }
     symbol_timeout = flags & (1 << 7);
     if (!symbol_timeout) {
+      if (rxPollFunction) { rxPollFunction(shouldAbort); }
       if (++stepping >= 2) {
         stepping = 0;
         yield();
       }
     }
-  } while (!symbol_timeout);
+  } while (!symbol_timeout && !shouldAbort);
 
   byte v = 0;
   byte stat = 0;
