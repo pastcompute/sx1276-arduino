@@ -140,7 +140,10 @@ private:
   int rssi_dbm_;
   int rx_snr_db_;
   bool rx_warm_;
+  bool tx_warm_;
   bool dead_;
+
+  uint8_t last_payload_length_;
 
   rxPollFunction_t rxPollFunction;
 };

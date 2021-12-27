@@ -118,7 +118,9 @@ SX1276Radio::SX1276Radio(int cs_pin, const SPISettings& spi_settings)
     rssi_dbm_(-255),
     rx_snr_db_(-255),
     rx_warm_(false),
+    tx_warm_(false),
     dead_(true),
+    last_payload_length_(0),
     rxPollFunction(NULL)
 {
   // Note; we want DEBUG ( Serial) here because this happens before Serial is initialised,
@@ -404,25 +406,34 @@ bool SX1276Radio::TransmitMessage(const void *payload, byte len, bool withStandb
   rx_warm_ = false;
 
   if (withStandby) {
-    // LoRa, Standby - optional if already in standby mode, because it adds unnecessary delay
+    // LoRa, Standby - optional if already in standby mode, or we just transmitted, because it adds unnecessary delay
     WriteRegister(SX1276REG_OpMode, 0x81);
+    tx_warm_ = false;
     delay(10);
   }
 
   // Reset TX FIFO.
   const byte FIFO_START = 0xff - max_tx_payload_bytes_ + 1;
-  WriteRegister(SX1276REG_FifoTxBaseAddr, FIFO_START);
-  WriteRegister(SX1276REG_FifoAddrPtr, FIFO_START);
-  WriteRegister(SX1276REG_MaxPayloadLength, max_tx_payload_bytes_);
-  WriteRegister(SX1276REG_PayloadLength, len);
-
-  byte v;
-#if 0
-  ReadRegister(SX1276REG_FifoAddrPtr, v);
-  if (v != FIFO_START) {
-    DEBUG("FIFO write pointer reset error! expected %02x got %02x\n\r", FIFO_START, v);
+  if (!tx_warm_) {
+    // At the moment, each register write costs 7ms (WTAF why, though?)
+    // This saves us 21ms (because we otherwise clear IRQ at end)
+    WriteRegister(SX1276REG_FifoTxBaseAddr, FIFO_START);
+    WriteRegister(SX1276REG_MaxPayloadLength, max_tx_payload_bytes_);
+    WriteRegister(SX1276REG_IrqFlagsMask, 0xf7); // write a 1 to IRQ to ignore; f7 --> TxDoneMask is only one active
+    WriteRegister(SX1276REG_IrqFlags, 0xff); // cant verify; clears on 0xff write
+  } else {
+    // Assume we cleared the IRQ at end of last tx
   }
-#endif
+
+  // save another 7ms by only setting payload len when it changes
+  if (last_payload_length_ != len || !tx_warm_) {
+    last_payload_length_ = len;
+    WriteRegister(SX1276REG_PayloadLength, len);
+  }
+  tx_warm_ = true;
+
+  WriteRegister(SX1276REG_FifoAddrPtr, FIFO_START);
+  byte v;
   // Write payload into FIFO
   // TODO: merge into one SPI transaction
   const byte* p = (const byte*)payload;
@@ -433,13 +444,12 @@ bool SX1276Radio::TransmitMessage(const void *payload, byte len, bool withStandb
   //byte v;
   ReadRegister(SX1276REG_FifoAddrPtr, v);
   if (v != FIFO_START + len) {
+    // This has been observed in the wild, so leaving this here for now...
     DEBUG("FIFO write pointer mismatch, expected %02x got %02x\n\r", FIFO_START + len, v);
   }
 
   // TX mode
-  WriteRegister(SX1276REG_IrqFlagsMask, 0xf7); // write a 1 to IRQ to ignore
-  WriteRegister(SX1276REG_IrqFlags, 0xff); // cant verify; clears on 0xff write
-  WriteRegister(SX1276REG_OpMode, 0x83);
+  WriteRegister(SX1276REG_OpMode, 0x83); // trigger transmit of loaded packet
 
   // Wait until TX DONE, or timeout
   // We make the timeout an estimate based on predicted TOA
@@ -460,6 +470,9 @@ bool SX1276Radio::TransmitMessage(const void *payload, byte len, bool withStandb
   if (!ok) {
     DEBUG("TX TIMEOUT!");
     return false;
+  } else {
+    // Clear the IRQ flag
+    WriteRegister(SX1276REG_IrqFlags, 0xff);
   }
   // On the way out, we default to staying in LoRa mode
   // the caller can the choose to return to standby
@@ -493,6 +506,7 @@ void SX1276Radio::ReceiveInit()
   WriteRegister(SX1276REG_IrqFlagsMask, 0x0f);
 
   rx_warm_ = true;
+  tx_warm_ = false;
 }
 
 ICACHE_FLASH_ATTR
