@@ -114,6 +114,7 @@ SX1276Radio::SX1276Radio(int cs_pin, const SPISettings& spi_settings)
     bandwidth_idx_(0xff),
     spreading_factor_(DEFAULT_SPREADING_FACTOR),
     coding_rate_(DEFAULT_CODING_RATE),
+    carrier_hz_(0),
     rssi_dbm_(-255),
     rx_snr_db_(-255),
     rx_warm_(false),
@@ -179,7 +180,7 @@ void SX1276Radio::ConfigureBandwidth() {
   // because implicit header could have been on
   // 125kHz, 4/6, explicit header
   const byte bwb = BandwidthToBitfield(bandwidth_hz_);
-  byte v = (bwb << 4) | (CodingRateToBitfield(coding_rate_) << 1) | 0x0;
+  byte v = (bwb << 4) | (CodingRateToBitfield(coding_rate_) << 1) | 0x0; // 0x0 --> Explicit header mode
   WriteRegister(SX1276REG_ModemConfig1, v);
   bandwidth_idx_ = bwb;
 
@@ -191,6 +192,16 @@ void SX1276Radio::ConfigureBandwidth() {
     WriteRegister(SX1276REG_RegSeqConfig1, 0x03);
   }
 }
+
+ICACHE_FLASH_ATTR
+void SX1276Radio::ConfigureSpreadingFactor()
+{
+  byte v = (spreading_factor_ << 4) | (0 << SX1276_BITSHIFT_TX_CONTINUOUS_MODE)| (1 << SX1276_BITSHIFT_RX_PAYLOAD_CRC_ON) | ((symbol_timeout_ >> 8) & 0x03);
+  WriteRegister(SX1276REG_ModemConfig2, v);
+  v = symbol_timeout_ & 0xff;
+  WriteRegister(SX1276REG_SymbTimeoutLsb, v);
+}
+
 
 ICACHE_FLASH_ATTR
 bool SX1276Radio::Begin()
@@ -208,7 +219,7 @@ bool SX1276Radio::Begin()
   WriteRegister(SX1276REG_OpMode, 0x81, true);
 
   // Switch to maximum current mode (0x1B == 240mA), and enable overcurrent protection
-  WriteRegister(SX1276REG_Ocp, (1<<5) | 0x0B); // 0b is default, 1b max
+  WriteRegister(SX1276REG_Ocp, (1<<5) | 0x0B); // 0b is default (100mA), 1b max
 
   // Verify operating mode
   ReadRegister(SX1276REG_OpMode, v);
@@ -219,13 +230,7 @@ bool SX1276Radio::Begin()
   dead_ = false;
 
   ConfigureBandwidth();
-
-  // SF9, normal (not continuous) mode, CRC, and upper 2 bits of symbol timeout (maximum i.e. 1023)
-  // We use 255, or 255 x (2^9)/125000 or ~1 second
-  v = (spreading_factor_ << 4) | (0 << SX1276_BITSHIFT_TX_CONTINUOUS_MODE)| (1 << SX1276_BITSHIFT_RX_PAYLOAD_CRC_ON) | ((symbol_timeout_ >> 8) & 0x03);
-  WriteRegister(SX1276REG_ModemConfig2, v);
-  v = symbol_timeout_ & 0xff;
-  WriteRegister(SX1276REG_SymbTimeoutLsb, v);
+  ConfigureSpreadingFactor();
 
   // LED on DIO3 (bits 0..1 of register): Valid header : 01
   // Pin header DIO1 : Rx timeout: 00
@@ -246,6 +251,11 @@ bool SX1276Radio::Begin()
   // Preamble size
   WriteRegister(SX1276REG_PreambleLSB, preamble_);
 
+  // If a carrier preset, then enable it immediately
+  // Otherwise, we will be at the current hardware default, whatever that is
+  if (carrier_hz_ > 0) {
+    SetCarrier(carrier_hz_);
+  }
   return true;
 }
 
@@ -265,6 +275,7 @@ void SX1276Radio::ReadCarrier(uint32_t& carrier_hz)
   carrier_hz = actual_hz;
 }
 
+ICACHE_FLASH_ATTR
 void SX1276Radio::ReadBandwidth(uint32_t& bandwidth_hz)
 {
   byte v;
@@ -274,36 +285,41 @@ void SX1276Radio::ReadBandwidth(uint32_t& bandwidth_hz)
   bandwidth_idx_ = v;
 }
 
-
 ICACHE_FLASH_ATTR
-byte SX1276Radio::SetSpreadingFactor(byte sf) {
-  if (sf < 6) { sf = 7; }
-  if (sf > 12) { sf = 7; }
-  spreading_factor_ = sf;
-
-  byte v = (spreading_factor_ << 4) | (0 << SX1276_BITSHIFT_TX_CONTINUOUS_MODE)| (1 << SX1276_BITSHIFT_RX_PAYLOAD_CRC_ON) | ((symbol_timeout_ >> 8) & 0x03);
-  WriteRegister(SX1276REG_ModemConfig2, v);
-  v = symbol_timeout_ & 0xff;
-  WriteRegister(SX1276REG_SymbTimeoutLsb, v);
-
-  return spreading_factor_;
+void SX1276Radio::ReadSpreadingFactor(byte& sf)
+{
+  byte v;
+  ReadRegister(SX1276REG_ModemConfig2, v);
+  sf = spreading_factor_ = ((v >> 4) & 0xf);
 }
 
 ICACHE_FLASH_ATTR
-uint32_t SX1276Radio::SetBandwidth(byte bwIndex) {
+void SX1276Radio::SetSpreadingFactor(byte sf)
+{
+  if (sf < 6) { sf = 7; }
+  if (sf > 12) { sf = 7; }
+  spreading_factor_ = sf;
+  if (dead_) { return; }
+  ConfigureSpreadingFactor();
+}
+
+ICACHE_FLASH_ATTR
+void SX1276Radio::SetBandwidth(byte bwIndex) {
   uint32_t bw = BitfieldToBandwidth(bwIndex);
   if (bw == 0) {
     bwIndex = SX1276_LORA_BW_125000;
     bw = BitfieldToBandwidth(bwIndex);
   }
   bandwidth_hz_ = bw;
+  if (dead_) { return; }
   ConfigureBandwidth();
-  return bandwidth_hz_;
 }
 
 ICACHE_FLASH_ATTR
 void SX1276Radio::SetCarrier(uint32_t carrier_hz)
 {
+  carrier_hz_ = carrier_hz;
+  if (dead_) { return; }
   rx_warm_ = false;
   // Carrier frequency
   // { F(Xosc) x F } / 2^19
@@ -370,6 +386,14 @@ void SX1276Radio::Standby()
 }
 
 ICACHE_FLASH_ATTR
+void SX1276Radio::SetPowerLimit(byte ocpTrim)
+{
+  // TODO improve checking
+  WriteRegister(SX1276REG_Ocp, (1<<5) | (ocpTrim & 0xf));
+}
+
+
+ICACHE_FLASH_ATTR
 bool SX1276Radio::TransmitMessage(const void *payload, byte len, bool withStandby)
 {
   if (len > max_tx_payload_bytes_) {
@@ -392,6 +416,13 @@ bool SX1276Radio::TransmitMessage(const void *payload, byte len, bool withStandb
   WriteRegister(SX1276REG_MaxPayloadLength, max_tx_payload_bytes_);
   WriteRegister(SX1276REG_PayloadLength, len);
 
+  byte v;
+#if 0
+  ReadRegister(SX1276REG_FifoAddrPtr, v);
+  if (v != FIFO_START) {
+    DEBUG("FIFO write pointer reset error! expected %02x got %02x\n\r", FIFO_START, v);
+  }
+#endif
   // Write payload into FIFO
   // TODO: merge into one SPI transaction
   const byte* p = (const byte*)payload;
@@ -399,7 +430,7 @@ bool SX1276Radio::TransmitMessage(const void *payload, byte len, bool withStandb
     WriteRegister(SX1276REG_Fifo, *p++);
   }
 
-  byte v;
+  //byte v;
   ReadRegister(SX1276REG_FifoAddrPtr, v);
   if (v != FIFO_START + len) {
     DEBUG("FIFO write pointer mismatch, expected %02x got %02x\n\r", FIFO_START + len, v);
@@ -414,7 +445,7 @@ bool SX1276Radio::TransmitMessage(const void *payload, byte len, bool withStandb
   // We make the timeout an estimate based on predicted TOA
   bool ok = false;
   int ticks = 1 + PredictTimeOnAir(len)  / 10;
-  DEBUG("TX TOA TICKS %d\n\r", ticks);
+  // DEBUG("TX TOA TICKS %d\n\r", ticks);
   do {
     ReadRegister(SX1276REG_IrqFlags, v);
     if (v & (1<<3)) {

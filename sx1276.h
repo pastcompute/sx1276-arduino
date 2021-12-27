@@ -53,6 +53,9 @@ public:
   /// Get the currently set bandwidth from the chip
   void ReadBandwidth(uint32_t& bandwidth_hz);
 
+  /// Get the currently set spreading factor from the chip
+  void ReadSpreadingFactor(byte& sf);
+
   /// Get the maximum allowed payload in bytes
   uint8_t GetMaxPayload() const { return max_tx_payload_bytes_; }
 
@@ -64,14 +67,15 @@ public:
   /// ie chips/symbol = 2^sf
   /// at reset is 7 (128)
   /// invalid values are forced to 7
-  byte SetSpreadingFactor(byte sf);
+  void SetSpreadingFactor(byte sf);
   byte GetSpreadingFactor() const { return spreading_factor_; }
 
   /// Set bandwidth using the SX1276_LORA_BW_xxx constants
-  /// Return actual selected bandwidth, invalid forced to 125000
-  uint32_t SetBandwidth(byte bwIndex);
+  void SetBandwidth(byte bwIndex);
   uint32_t GetBandwidthHz() const { return bandwidth_hz_; }
   byte GetBandwidthIndex() const { return bandwidth_idx_; }
+
+  void SetPowerLimit(byte ocpTrim);
 
   /// Get RSSi of last receive
   int GetLastRssi() const { return rssi_dbm_; }
@@ -114,6 +118,7 @@ private:
   inline void WriteRegister(byte reg, byte val, bool verify = false) { byte unused; WriteRegister(reg, val, unused, verify); }
 
   void ConfigureBandwidth();
+  void ConfigureSpreadingFactor();
   void ReceiveInit();
 
   // module settings
@@ -129,6 +134,7 @@ private:
   uint8_t bandwidth_idx_;        // cached
   byte spreading_factor_;        // datasheet units: 6,7,8,9,10,11,12
   byte coding_rate_;             // datasheet units: 5,6,7,8
+  uint32_t carrier_hz_;
 
   // radio status
   int rssi_dbm_;
