@@ -370,7 +370,7 @@ void SX1276Radio::Standby()
 }
 
 ICACHE_FLASH_ATTR
-bool SX1276Radio::TransmitMessage(const void *payload, byte len)
+bool SX1276Radio::TransmitMessage(const void *payload, byte len, bool withStandby)
 {
   if (len > max_tx_payload_bytes_) {
     len = max_tx_payload_bytes_;
@@ -378,9 +378,12 @@ bool SX1276Radio::TransmitMessage(const void *payload, byte len)
   }
 
   rx_warm_ = false;
-  // LoRa, Standby
-  WriteRegister(SX1276REG_OpMode, 0x81);
-  delay(10);
+
+  if (withStandby) {
+    // LoRa, Standby - optional if already in standby mode, because it adds unnecessary delay
+    WriteRegister(SX1276REG_OpMode, 0x81);
+    delay(10);
+  }
 
   // Reset TX FIFO.
   const byte FIFO_START = 0xff - max_tx_payload_bytes_ + 1;
