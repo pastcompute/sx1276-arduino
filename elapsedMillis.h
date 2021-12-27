@@ -52,6 +52,7 @@ public:
 	elapsedMillis operator + (unsigned int val) const  { elapsedMillis r(*this); r.ms -= val; return r; }
 	elapsedMillis operator + (long val) const          { elapsedMillis r(*this); r.ms -= val; return r; }
 	elapsedMillis operator + (unsigned long val) const { elapsedMillis r(*this); r.ms -= val; return r; }
+	unsigned long get() const { return ms; }
 };
 
 class elapsedMicros
