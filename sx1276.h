@@ -116,6 +116,7 @@ private:
 
   void WriteRegister(byte reg, byte val, byte& result, bool verify);
   inline void WriteRegister(byte reg, byte val, bool verify = false) { byte unused; WriteRegister(reg, val, unused, verify); }
+  void WriteBulk(byte reg, const byte *val, byte count);
 
   void ConfigureBandwidth();
   void ConfigureSpreadingFactor();
@@ -143,7 +144,8 @@ private:
   bool tx_warm_;
   bool dead_;
 
-  uint8_t last_payload_length_;
+  uint8_t cached_tx_payload_length_;
+  int cached_tx_toa_;
 
   rxPollFunction_t rxPollFunction;
 };

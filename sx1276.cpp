@@ -26,6 +26,8 @@
 #define ICACHE_FLASH_ATTR
 #endif
 
+#include "elapsedMillis.h"
+
 // Somewhat arbitrary starting point
 #define DEFAULT_BW_HZ 125000
 #define DEFAULT_SPREADING_FACTOR 9
@@ -120,7 +122,8 @@ SX1276Radio::SX1276Radio(int cs_pin, const SPISettings& spi_settings)
     rx_warm_(false),
     tx_warm_(false),
     dead_(true),
-    last_payload_length_(0),
+    cached_tx_payload_length_(0),
+    cached_tx_toa_(0),
     rxPollFunction(NULL)
 {
   // Note; we want DEBUG ( Serial) here because this happens before Serial is initialised,
@@ -150,6 +153,7 @@ void SX1276Radio::WriteRegister(byte reg, byte val, byte& result, bool verify)
 {
   SPI.beginTransaction(spi_settings_);
   digitalWrite(cs_pin_, LOW);
+  delayMicroseconds(10);
   SPI.transfer(reg + 0x80);  // Dont forget to set the high bit!
   result = SPI.transfer(val);
   digitalWrite(cs_pin_, HIGH);
@@ -165,6 +169,24 @@ void SX1276Radio::WriteRegister(byte reg, byte val, byte& result, bool verify)
       DEBUG("[W] %02x <- %02x failed, got %02x\n\r", reg, val, newval);
     }
   }
+}
+
+//ICACHE_FLASH_ATTR
+void SX1276Radio::WriteBulk(byte reg, const byte *val, byte count)
+{
+  SPI.beginTransaction(spi_settings_);
+  for (byte n=0; n < count; n++) {
+    digitalWrite(cs_pin_, LOW);
+    delayMicroseconds(10);
+    SPI.transfer(reg + 0x80);  // Dont forget to set the high bit!
+    SPI.transfer(val[n]);
+    digitalWrite(cs_pin_, HIGH);
+    delayMicroseconds(10);
+  }
+  SPI.endTransaction();
+#if VERBOSE_W
+  DEBUG("[WB] %02x <-- (%d bytes)\n\r", reg, count);
+#endif
 }
 
 ICACHE_FLASH_ATTR
@@ -426,8 +448,9 @@ bool SX1276Radio::TransmitMessage(const void *payload, byte len, bool withStandb
   }
 
   // save another 7ms by only setting payload len when it changes
-  if (last_payload_length_ != len || !tx_warm_) {
-    last_payload_length_ = len;
+  if (cached_tx_payload_length_ != len || !tx_warm_) {
+    cached_tx_payload_length_ = len;
+    cached_tx_toa_ = PredictTimeOnAir(len);
     WriteRegister(SX1276REG_PayloadLength, len);
   }
   tx_warm_ = true;
@@ -437,9 +460,15 @@ bool SX1276Radio::TransmitMessage(const void *payload, byte len, bool withStandb
   // Write payload into FIFO
   // TODO: merge into one SPI transaction
   const byte* p = (const byte*)payload;
+#if SAFE_BUT_SLOW
   for (byte b=0; b < len; b++) {
     WriteRegister(SX1276REG_Fifo, *p++);
   }
+#else
+  // Saves 83ms when sending 14 bytes... total time is 8ms for the transaction
+  // We could probably eek out more by merging with SX1276REG_FifoAddrPtr above...
+  WriteBulk(SX1276REG_Fifo, p, len);
+#endif
 
   //byte v;
   ReadRegister(SX1276REG_FifoAddrPtr, v);
@@ -451,27 +480,36 @@ bool SX1276Radio::TransmitMessage(const void *payload, byte len, bool withStandb
   // TX mode
   WriteRegister(SX1276REG_OpMode, 0x83); // trigger transmit of loaded packet
 
+  // elapsedMillis ts4;
   // Wait until TX DONE, or timeout
   // We make the timeout an estimate based on predicted TOA
   bool ok = false;
-  int ticks = 1 + PredictTimeOnAir(len)  / 10;
+  // int toa = PredictTimeOnAir(len);
+  //int ticks = 1 + toa / 10;
   // DEBUG("TX TOA TICKS %d\n\r", ticks);
+  // An alternative to this polling loop is to have an interrupt instead
+  // which will remove the latency in reading the register...
+  int toa = cached_tx_toa_;
+  elapsedMillis tPollStart;
   do {
     ReadRegister(SX1276REG_IrqFlags, v);
     if (v & (1<<3)) {
       ok = true;
       break;
     }
-    if (ticks == 0) { break; }
-    delay(10);
-    ticks --;
+    if (tPollStart > toa) { break; }
+    // delay(10);
+    // ticks --;
   } while (true);
+
+  //DEBUG("%d %d %d %d\n\r", (int)(long)ts1, (int)(long)ts2, (int)(long)ts3, (int)(long)tPollStart);
 
   if (!ok) {
     DEBUG("TX TIMEOUT!");
     return false;
   } else {
-    // Clear the IRQ flag
+    // Clear the IRQ flag...
+    // TODO: let caller do it so they can sequence other operations that start concurrently
     WriteRegister(SX1276REG_IrqFlags, 0xff);
   }
   // On the way out, we default to staying in LoRa mode
