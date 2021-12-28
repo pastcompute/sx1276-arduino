@@ -98,6 +98,9 @@ public:
   /// @return false if retry timeout exceeded. Presently internally set to predicted TOA + a fudge factor
   bool TransmitMessage(const void *payload, byte len, bool withStandby=true);
 
+  /// Clear any open IRQ
+  inline bool ClearInterrupts() { WriteRegister(SX1276REG_IrqFlags, 0xff); }
+
   /// Wait for a message, block until one is received or a symbol timeout occurs
   /// Useful in simple circumstances; may not perform well in high traffic scenarios
   /// @param buffer Buffer large enough to hold largest expected message

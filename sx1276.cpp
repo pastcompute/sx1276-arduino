@@ -442,7 +442,7 @@ bool SX1276Radio::TransmitMessage(const void *payload, byte len, bool withStandb
     WriteRegister(SX1276REG_FifoTxBaseAddr, FIFO_START);
     WriteRegister(SX1276REG_MaxPayloadLength, max_tx_payload_bytes_);
     WriteRegister(SX1276REG_IrqFlagsMask, 0xf7); // write a 1 to IRQ to ignore; f7 --> TxDoneMask is only one active
-    WriteRegister(SX1276REG_IrqFlags, 0xff); // cant verify; clears on 0xff write
+    ClearInterrupts();
   } else {
     // Assume we cleared the IRQ at end of last tx
   }
@@ -493,7 +493,7 @@ bool SX1276Radio::TransmitMessage(const void *payload, byte len, bool withStandb
   } else {
     // Clear the IRQ flag...
     // TODO: let caller do it so they can sequence other operations that start concurrently
-    WriteRegister(SX1276REG_IrqFlags, 0xff);
+    ClearInterrupts();
   }
   // On the way out, we default to staying in LoRa mode
   // the caller can the choose to return to standby
@@ -541,7 +541,7 @@ bool SX1276Radio::ReceiveMessage(byte buffer[], byte size, byte& received, bool&
   // In most use cases we probably want to to this once then stay 'warm'
   ReceiveInit();
 
-  WriteRegister(SX1276REG_IrqFlags, 0xff); // note, this one cant be verified; clears on 0xff write
+  ClearInterrupts();
 
   bool isSingleMode = true;
   WriteRegister(SX1276REG_OpMode, 0x86); // RX Single mode
