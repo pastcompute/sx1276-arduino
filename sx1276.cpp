@@ -147,7 +147,6 @@ void SX1276Radio::ReadRegister(byte reg, byte& result)
 #endif
 }
 
-// TODO: add a verify version if required (if things dont work)
 //ICACHE_FLASH_ATTR
 void SX1276Radio::WriteRegister(byte reg, byte val, byte& result, bool verify)
 {
@@ -424,21 +423,22 @@ bool SX1276Radio::TransmitMessage(const void *payload, byte len, bool withStandb
     len = max_tx_payload_bytes_;
     DEBUG("MESSAGE TOO LONG! TRUNCATED\n\r");
   }
-
+  // We dont yet support optimal interleaved rx/tx
   rx_warm_ = false;
-
+  // each SPI transaction costs 7ms on an XMC1100
+  // so we need to reduce unnecessary ops, and then combine whats left into a single transaction
+  // this lowers the time of this function once up and running, down to ~8ms + ToA
   if (withStandby) {
-    // LoRa, Standby - optional if already in standby mode, or we just transmitted, because it adds unnecessary delay
+    // LoRa, return to standby mode if was receiving or other mode
+    // this is redundant when already in standby mode, (incl. when we just transmitted)
     WriteRegister(SX1276REG_OpMode, 0x81);
     tx_warm_ = false;
     delay(10);
   }
 
-  // Reset TX FIFO.
+  // Reset the TX FIFO
   const byte FIFO_START = 0xff - max_tx_payload_bytes_ + 1;
   if (!tx_warm_) {
-    // At the moment, each register write costs 7ms (WTAF why, though?)
-    // This saves us 21ms (because we otherwise clear IRQ at end)
     WriteRegister(SX1276REG_FifoTxBaseAddr, FIFO_START);
     WriteRegister(SX1276REG_MaxPayloadLength, max_tx_payload_bytes_);
     WriteRegister(SX1276REG_IrqFlagsMask, 0xf7); // write a 1 to IRQ to ignore; f7 --> TxDoneMask is only one active
@@ -447,7 +447,7 @@ bool SX1276Radio::TransmitMessage(const void *payload, byte len, bool withStandb
     // Assume we cleared the IRQ at end of last tx
   }
 
-  // save another 7ms by only setting payload len when it changes
+  // only set payload len when it changes
   if (cached_tx_payload_length_ != len || !tx_warm_) {
     cached_tx_payload_length_ = len;
     cached_tx_toa_ = PredictTimeOnAir(len);
@@ -457,20 +457,10 @@ bool SX1276Radio::TransmitMessage(const void *payload, byte len, bool withStandb
 
   WriteRegister(SX1276REG_FifoAddrPtr, FIFO_START);
   byte v;
-  // Write payload into FIFO
-  // TODO: merge into one SPI transaction
   const byte* p = (const byte*)payload;
-#if SAFE_BUT_SLOW
-  for (byte b=0; b < len; b++) {
-    WriteRegister(SX1276REG_Fifo, *p++);
-  }
-#else
-  // Saves 83ms when sending 14 bytes... total time is 8ms for the transaction
-  // We could probably eek out more by merging with SX1276REG_FifoAddrPtr above...
+  // Write the buffer to the FIFO in a single SPI transaction
   WriteBulk(SX1276REG_Fifo, p, len);
-#endif
-
-  //byte v;
+  // Check it worked. For some reason, this sometimes failed to increment the pointer
   ReadRegister(SX1276REG_FifoAddrPtr, v);
   if (v != FIFO_START + len) {
     // This has been observed in the wild, so leaving this here for now...
@@ -480,13 +470,9 @@ bool SX1276Radio::TransmitMessage(const void *payload, byte len, bool withStandb
   // TX mode
   WriteRegister(SX1276REG_OpMode, 0x83); // trigger transmit of loaded packet
 
-  // elapsedMillis ts4;
   // Wait until TX DONE, or timeout
   // We make the timeout an estimate based on predicted TOA
   bool ok = false;
-  // int toa = PredictTimeOnAir(len);
-  //int ticks = 1 + toa / 10;
-  // DEBUG("TX TOA TICKS %d\n\r", ticks);
   // An alternative to this polling loop is to have an interrupt instead
   // which will remove the latency in reading the register...
   int toa = cached_tx_toa_;
@@ -501,9 +487,6 @@ bool SX1276Radio::TransmitMessage(const void *payload, byte len, bool withStandb
     // delay(10);
     // ticks --;
   } while (true);
-
-  //DEBUG("%d %d %d %d\n\r", (int)(long)ts1, (int)(long)ts2, (int)(long)ts3, (int)(long)tPollStart);
-
   if (!ok) {
     DEBUG("TX TIMEOUT!");
     return false;
