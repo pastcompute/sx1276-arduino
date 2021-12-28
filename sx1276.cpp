@@ -110,9 +110,10 @@ inline unsigned CodingRateToBitfield(byte coding_rate)
 }
 
 ICACHE_FLASH_ATTR
-SX1276Radio::SX1276Radio(int cs_pin, const SPISettings& spi_settings)
+SX1276Radio::SX1276Radio(int cs_pin, const SPISettings& spi_settings, bool inAir9b)
   : cs_pin_(cs_pin),
     spi_settings_(spi_settings),
+    inAir9b_(inAir9b),
     symbol_timeout_(366), // in theory 3s, empirically 1.51s @ sf9 and bw 125000 although often, shorter maybe due to esp8266 timekeeping wierdness not accurately recording elapased time
     preamble_(0x8),
     max_tx_payload_bytes_(0x80),
@@ -122,6 +123,7 @@ SX1276Radio::SX1276Radio(int cs_pin, const SPISettings& spi_settings)
     spreading_factor_(DEFAULT_SPREADING_FACTOR),
     coding_rate_(DEFAULT_CODING_RATE),
     carrier_hz_(0),
+    lna_gain_(SX1276_LORA_LNA_GAIN_G4),
     rssi_dbm_(-255),
     rx_snr_db_(-255),
     rx_warm_(false),
@@ -226,6 +228,15 @@ void SX1276Radio::ConfigureBandwidth() {
 }
 
 ICACHE_FLASH_ATTR
+void SX1276Radio::ConfigureGain()
+{
+  // Setup the LNA:
+  // To start with: midpoint gain (gain E G1 (max)..G6 (min)) bits 7-5 and no boost, while we are testing in the lab...
+  // Boost, bits 0..1 - 00 = default LNA current, 11 == 150% boost, but we probably dont want that
+  WriteRegister(SX1276REG_Lna, ((lna_gain_ & 0x7)<< 5) | (0x00));
+}
+
+ICACHE_FLASH_ATTR
 void SX1276Radio::ConfigureSpreadingFactor()
 {
   byte v = (spreading_factor_ << 4) | (0 << SX1276_BITSHIFT_TX_CONTINUOUS_MODE)| (1 << SX1276_BITSHIFT_RX_PAYLOAD_CRC_ON) | ((symbol_timeout_ >> 8) & 0x03);
@@ -272,13 +283,18 @@ bool SX1276Radio::Begin()
   // Pin header DIO5 (bits 5-4): Clk Out: 10
   WriteRegister(SX1276REG_DioMapping2, 0x20);
 
-#if defined(SX1276_HIGH_POWER)
-  WriteRegister(SX1276REG_PaConfig, 0xff); // inAir9b
-  WriteRegister(SX1276REG_PaDac, 0x87);
-#else
-  // WriteRegister(SX1276REG_PaConfig, 0x7f);
-  // Default: WriteRegister(SX1276REG_PaDac, 0x84);
-#endif
+  if (inAir9b_) {
+    // with boost off, we lose signal from outside a meter or two... even when "max" power.
+    // Close range rx rssi ~ -99 to -115
+    // maybe the rubber duckies are no good?
+    // boost on and signal is too powerful when at max
+    // Close range rx rssi ~ -30 to -40 (power -6) to -45 (power -12) to -48 (power -15)
+    WriteRegister(SX1276REG_PaConfig, 0xf1); // inAir9b - max power, enable the boost, backoff max to 1 (almost lowest power)
+    WriteRegister(SX1276REG_PaDac, 0x87);
+  } else {
+    WriteRegister(SX1276REG_PaConfig, 0x7f); // max power, no boost is available
+    Default: WriteRegister(SX1276REG_PaDac, 0x84);
+  }
 
   // Preamble size
   WriteRegister(SX1276REG_PreambleLSB, preamble_);
@@ -346,6 +362,21 @@ void SX1276Radio::SetBandwidth(byte bwIndex) {
   if (dead_) { return; }
   ConfigureBandwidth();
 }
+
+ICACHE_FLASH_ATTR
+void SX1276Radio::SetLNAGain(byte gain)
+{
+  if (gain < SX1276_LORA_LNA_GAIN_G1) {
+    gain = SX1276_LORA_LNA_GAIN_G1;
+  }
+  if (gain > SX1276_LORA_LNA_GAIN_G6) {
+    gain = SX1276_LORA_LNA_GAIN_G6;
+  }
+  lna_gain_ = gain;
+  if (dead_) { return; }
+  ConfigureGain();
+}
+
 
 ICACHE_FLASH_ATTR
 void SX1276Radio::SetCarrier(uint32_t carrier_hz)
@@ -493,7 +524,7 @@ bool SX1276Radio::TransmitMessage(const void *payload, byte len, bool withStandb
   // We make the timeout an estimate based on predicted TOA
   // (An alternative to this polling loop is to have an interrupt instead, but then that depends on circuit)
   bool ok = false;
-  uint16_t toa = cached_tx_toa_;
+  uint32_t toa = cached_tx_toa_;
   elapsedMillis tPollStart;
   do {
     v = DoRegister(SX1276REG_IrqFlags, 0);
@@ -501,7 +532,7 @@ bool SX1276Radio::TransmitMessage(const void *payload, byte len, bool withStandb
       ok = true;
       break;
     }
-    if (tPollStart > toa + TOA_TX_MARGIN_MS) { break; }
+    if (tPollStart > (toa + TOA_TX_MARGIN_MS)) { break; }
     delayMicroseconds(SPI_CS_DELAY_US);
   } while (true);
   DoRegister(SX1276REG_IrqFlags + SX1276_SPI_WRITE_MASK, 0xff);
@@ -535,9 +566,7 @@ void SX1276Radio::ReceiveInit()
   delay(10);
 
   // Setup the LNA:
-  // To start with: midpoint gain (gain E G1 (max)..G6 (min)) bits 7-5 and no boost, while we are testing in the lab...
-  // Boost, bits 0..1 - 00 = default LNA current, 11 == 150% boost, but we probably dont want that
-  WriteRegister(SX1276REG_Lna, (SX1276_LORA_LNA_GAIN_G4 << 5) | (0x00));
+  ConfigureGain();
 
   WriteRegister(SX1276REG_MaxPayloadLength, max_rx_payload_bytes_);
   WriteRegister(SX1276REG_PayloadLength, max_rx_payload_bytes_);
@@ -613,7 +642,7 @@ bool SX1276Radio::ReceiveMessage(byte buffer[], byte size, byte& received, bool&
   int snr_packet = -255;
   int coding_rate = 0;
   ReadRegister(SX1276REG_PacketRssi, v); rssi_packet = -157 + v;
-  ReadRegister(SX1276REG_PacketSnr, v); snr_packet = (v & 0x80 ? (~v + 1) : v) / 4; // 2's comp div 4
+  ReadRegister(SX1276REG_PacketSnr, v); snr_packet = (v & 0x80 ? int(v) - 256 : v) / 4; // 2's comp div 4? really?
   ReadRegister(SX1276REG_ModemStat, stat);
   coding_rate = stat >> 5;
   switch (coding_rate) {

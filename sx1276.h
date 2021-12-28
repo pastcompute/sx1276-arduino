@@ -36,7 +36,7 @@ class SX1276Radio
 public:
   typedef void (*rxPollFunction_t)(bool& abort);
 
-  SX1276Radio(int cs_pin, const SPISettings& spi_settings);
+  SX1276Radio(int cs_pin, const SPISettings& spi_settings, bool inAir9b = false);
 
   /// Revert to Standby mode and return all settings to a useful default
   /// The caller might choose to reset the module via GPIO prior to calling this
@@ -74,6 +74,9 @@ public:
   void SetBandwidth(byte bwIndex);
   uint32_t GetBandwidthHz() const { return bandwidth_hz_; }
   byte GetBandwidthIndex() const { return bandwidth_idx_; }
+
+  void SetLNAGain(byte gain);
+  byte GetLNAGain() const { return lna_gain_; }
 
   void SetPowerLimit(byte ocpTrim);
 
@@ -124,11 +127,13 @@ private:
 
   void ConfigureBandwidth();
   void ConfigureSpreadingFactor();
+  void ConfigureGain();
   void ReceiveInit();
 
   // module settings
   int cs_pin_;
   SPISettings spi_settings_;
+  bool inAir9b_;
 
   // radio settings
   uint16_t symbol_timeout_;      // In datasheet units
@@ -140,6 +145,7 @@ private:
   byte spreading_factor_;        // datasheet units: 6,7,8,9,10,11,12
   byte coding_rate_;             // datasheet units: 5,6,7,8
   uint32_t carrier_hz_;
+  byte lna_gain_;                // datasheet units: 1 (G1 - highest) --> 6 (G6)
 
   // radio status
   int rssi_dbm_;
