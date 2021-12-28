@@ -605,15 +605,15 @@ bool SX1276Radio::ReceiveMessage(byte buffer[], byte size, byte& received, bool&
 
   rssi_dbm_ = -255;
   rx_snr_db_ = -255;
-  ReadRegister(SX1276REG_Rssi, v); rssi_dbm_ = -137 + v;
+  ReadRegister(SX1276REG_Rssi, v); rssi_dbm_ = -157 + v;
 
   if (!done) { return false; }
 
   int rssi_packet = 255;
   int snr_packet = -255;
   int coding_rate = 0;
-  ReadRegister(SX1276REG_PacketRssi, v); rssi_packet = -137 + v;
-  ReadRegister(SX1276REG_PacketSnr, v); snr_packet = (v & 0x80 ? (~v + 1) : v) >> 4; // 2's comp
+  ReadRegister(SX1276REG_PacketRssi, v); rssi_packet = -157 + v;
+  ReadRegister(SX1276REG_PacketSnr, v); snr_packet = (v & 0x80 ? (~v + 1) : v) / 4; // 2's comp div 4
   ReadRegister(SX1276REG_ModemStat, stat);
   coding_rate = stat >> 5;
   switch (coding_rate) {
