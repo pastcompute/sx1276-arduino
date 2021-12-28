@@ -17,8 +17,8 @@
   along with SentriFarm Radio Relay.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#include "sx1276.h"
 #include "sx1276reg.h"
+#include "sx1276.h"
 #include <SPI.h>
 #if defined(ESP8266)
 #include <ets_sys.h>
@@ -33,9 +33,14 @@
 #define DEFAULT_SPREADING_FACTOR 9
 #define DEFAULT_CODING_RATE 6
 
+#define SPI_CS_DELAY_US 5
+#define TOA_TX_MARGIN_MS 5
+
 #define VERBOSE 1
 #define VERBOSE_W 0
 #define VERBOSE_R 0
+#define VERBOSE_TX_TIMING 0
+
 
 #ifdef TEENSYDUINO
 #define Serial Serial1
@@ -148,14 +153,22 @@ void SX1276Radio::ReadRegister(byte reg, byte& result)
 }
 
 //ICACHE_FLASH_ATTR
+inline byte SX1276Radio::DoRegister(byte reg, byte val) const
+{
+  digitalWrite(cs_pin_, LOW);
+  delayMicroseconds(SPI_CS_DELAY_US);
+  SPI.transfer(reg);
+  byte result = SPI.transfer(val);
+  digitalWrite(cs_pin_, HIGH);
+  return result;
+}
+
+
+//ICACHE_FLASH_ATTR
 void SX1276Radio::WriteRegister(byte reg, byte val, byte& result, bool verify)
 {
   SPI.beginTransaction(spi_settings_);
-  digitalWrite(cs_pin_, LOW);
-  delayMicroseconds(10);
-  SPI.transfer(reg + 0x80);  // Dont forget to set the high bit!
-  result = SPI.transfer(val);
-  digitalWrite(cs_pin_, HIGH);
+  result = DoRegister(reg + SX1276_SPI_WRITE_MASK, val);
   SPI.endTransaction();
 #if VERBOSE_W
   DEBUG("[W] %02x <-- %02x --> %02x\n\r", reg, val, result);
@@ -175,12 +188,8 @@ void SX1276Radio::WriteBulk(byte reg, const byte *val, byte count)
 {
   SPI.beginTransaction(spi_settings_);
   for (byte n=0; n < count; n++) {
-    digitalWrite(cs_pin_, LOW);
-    delayMicroseconds(10);
-    SPI.transfer(reg + 0x80);  // Dont forget to set the high bit!
-    SPI.transfer(val[n]);
-    digitalWrite(cs_pin_, HIGH);
-    delayMicroseconds(10);
+    DoRegister(reg + SX1276_SPI_WRITE_MASK, val[n]);
+    delayMicroseconds(SPI_CS_DELAY_US);
   }
   SPI.endTransaction();
 #if VERBOSE_W
@@ -236,18 +245,18 @@ bool SX1276Radio::Begin()
   WriteRegister(SX1276REG_OpMode, v & 0xf8, true);
 
   // Sleep
-  WriteRegister(SX1276REG_OpMode, 0x80, true);
+  WriteRegister(SX1276REG_OpMode, SX1276_OPMODE_SLEEP, true);
 
   // LoRa, Standby
-  WriteRegister(SX1276REG_OpMode, 0x81, true);
+  WriteRegister(SX1276REG_OpMode, SX1276_OPMODE_STANDBY, true);
 
   // Switch to maximum current mode (0x1B == 240mA), and enable overcurrent protection
   WriteRegister(SX1276REG_Ocp, (1<<5) | 0x0B); // 0b is default (100mA), 1b max
 
   // Verify operating mode
   ReadRegister(SX1276REG_OpMode, v);
-  if (v != 0x81) {
-    DEBUG("Unable to enter LoRa mode. v=0x%02x\n\r", v);
+  if (v != SX1276_OPMODE_STANDBY) {
+    DEBUG("Unable to enter LoRa Standby mode. v=0x%02x\n\r", v);
     return false;
   }
   dead_ = false;
@@ -403,7 +412,7 @@ int SX1276Radio::PredictTimeOnAir(byte payload_len) const
 ICACHE_FLASH_ATTR
 void SX1276Radio::Standby()
 {
-  WriteRegister(SX1276REG_OpMode, 0x81);
+  WriteRegister(SX1276REG_OpMode, SX1276_OPMODE_STANDBY);
   delay(10);
   rx_warm_ = false;
 }
@@ -415,10 +424,12 @@ void SX1276Radio::SetPowerLimit(byte ocpTrim)
   WriteRegister(SX1276REG_Ocp, (1<<5) | (ocpTrim & 0xf));
 }
 
-
 ICACHE_FLASH_ATTR
 bool SX1276Radio::TransmitMessage(const void *payload, byte len, bool withStandby)
 {
+#if VERBOSE_TX_TIMING
+  elapsedMillis t0;
+#endif
   if (len > max_tx_payload_bytes_) {
     len = max_tx_payload_bytes_;
     DEBUG("MESSAGE TOO LONG! TRUNCATED\n\r");
@@ -431,7 +442,7 @@ bool SX1276Radio::TransmitMessage(const void *payload, byte len, bool withStandb
   if (withStandby) {
     // LoRa, return to standby mode if was receiving or other mode
     // this is redundant when already in standby mode, (incl. when we just transmitted)
-    WriteRegister(SX1276REG_OpMode, 0x81);
+    WriteRegister(SX1276REG_OpMode, SX1276_OPMODE_STANDBY);
     tx_warm_ = false;
     delay(10);
   }
@@ -446,58 +457,70 @@ bool SX1276Radio::TransmitMessage(const void *payload, byte len, bool withStandb
   } else {
     // Assume we cleared the IRQ at end of last tx
   }
-
   // only set payload len when it changes
   if (cached_tx_payload_length_ != len || !tx_warm_) {
     cached_tx_payload_length_ = len;
     cached_tx_toa_ = PredictTimeOnAir(len);
+    DEBUG("Update ToA(%d) -> %dms\n\r", len, cached_tx_toa_);
     WriteRegister(SX1276REG_PayloadLength, len);
   }
   tx_warm_ = true;
 
-  WriteRegister(SX1276REG_FifoAddrPtr, FIFO_START);
+  // OK, leaky abstraction - fall back to bare SPI code to remove the final ~ 21ms of latency
   byte v;
-  const byte* p = (const byte*)payload;
-  // Write the buffer to the FIFO in a single SPI transaction
-  WriteBulk(SX1276REG_Fifo, p, len);
-  // Check it worked. For some reason, this sometimes failed to increment the pointer
-  ReadRegister(SX1276REG_FifoAddrPtr, v);
+  SPI.beginTransaction(spi_settings_);
+  DoRegister(SX1276REG_FifoAddrPtr + SX1276_SPI_WRITE_MASK, FIFO_START);
+  delayMicroseconds(SPI_CS_DELAY_US);
+  for (byte n=0; n < len; n++) {
+    DoRegister(SX1276REG_Fifo + SX1276_SPI_WRITE_MASK, ((const byte *)payload)[n]);
+    delayMicroseconds(SPI_CS_DELAY_US);
+  }
+  v = DoRegister(SX1276REG_FifoAddrPtr, 0);
+  delayMicroseconds(SPI_CS_DELAY_US);
+  DoRegister(SX1276REG_OpMode + SX1276_SPI_WRITE_MASK, SX1276_OPMODE_TX);
+#if VERBOSE_W
+  DEBUG("[W] %02x <-- %02x\n\r", SX1276REG_FifoAddrPtr, FIFO_START);
+  DEBUG("[WB] %02x <-- (%d bytes)\n\r", SX1276REG_Fifo, len);
+#endif
+#if VERBOSE_R
+  DEBUG("[R] %02x --> %02x\n\r", SX1276REG_FifoAddrPtr, v);
+#endif
   if (v != FIFO_START + len) {
     // This has been observed in the wild, so leaving this here for now...
     DEBUG("FIFO write pointer mismatch, expected %02x got %02x\n\r", FIFO_START + len, v);
   }
-
-  // TX mode
-  WriteRegister(SX1276REG_OpMode, 0x83); // trigger transmit of loaded packet
-
   // Wait until TX DONE, or timeout
   // We make the timeout an estimate based on predicted TOA
+  // (An alternative to this polling loop is to have an interrupt instead, but then that depends on circuit)
   bool ok = false;
-  // An alternative to this polling loop is to have an interrupt instead
-  // which will remove the latency in reading the register...
-  int toa = cached_tx_toa_;
+  uint16_t toa = cached_tx_toa_;
   elapsedMillis tPollStart;
   do {
-    ReadRegister(SX1276REG_IrqFlags, v);
+    v = DoRegister(SX1276REG_IrqFlags, 0);
     if (v & (1<<3)) {
       ok = true;
       break;
     }
-    if (tPollStart > toa) { break; }
-    // delay(10);
-    // ticks --;
+    if (tPollStart > toa + TOA_TX_MARGIN_MS) { break; }
+    delayMicroseconds(SPI_CS_DELAY_US);
   } while (true);
-  if (!ok) {
-    DEBUG("TX TIMEOUT!");
-    return false;
-  } else {
-    // Clear the IRQ flag...
-    // TODO: let caller do it so they can sequence other operations that start concurrently
-    ClearInterrupts();
-  }
+  DoRegister(SX1276REG_IrqFlags + SX1276_SPI_WRITE_MASK, 0xff);
+  SPI.endTransaction();
+#if VERBOSE_R
+  DEBUG("[R] %02x --> %02x\n\r", SX1276REG_IrqFlags, v);
+#endif
+#if VERBOSE_W
+  DEBUG("[W] %02x <-- %02x\n\r", SX1276REG_IrqFlags, 0xff);
+#endif
+#if VERBOSE_TX_TIMING
+  DEBUG("%d %d\n\r", (int)t0, (int)tPollStart);
+#endif
   // On the way out, we default to staying in LoRa mode
   // the caller can the choose to return to standby
-  return true;
+  if (!ok) {
+    DEBUG("TX TIMEOUT!\n\r");
+  }
+  return ok;
 }
 
 const uint8_t RX_BASE_ADDR = 0x0;
@@ -508,7 +531,7 @@ void SX1276Radio::ReceiveInit()
   if (rx_warm_) return;
 
   // LoRa, Standby
-  WriteRegister(SX1276REG_OpMode, 0x81);
+  WriteRegister(SX1276REG_OpMode, SX1276_OPMODE_STANDBY);
   delay(10);
 
   // Setup the LNA:
@@ -544,7 +567,7 @@ bool SX1276Radio::ReceiveMessage(byte buffer[], byte size, byte& received, bool&
   ClearInterrupts();
 
   bool isSingleMode = true;
-  WriteRegister(SX1276REG_OpMode, 0x86); // RX Single mode
+  WriteRegister(SX1276REG_OpMode, SX1276_OPMODE_RXSINGLE); // RX Single mode
 
   // Now we block, until symbol timeout or we get a message
   // Which in practice means polling the IRQ flags
