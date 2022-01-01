@@ -509,6 +509,7 @@ bool SX1276Radio::TransmitMessage(const void *payload, byte len, bool withStandb
   v = DoRegister(SX1276REG_FifoAddrPtr, 0);
   delayMicroseconds(SPI_CS_DELAY_US);
   DoRegister(SX1276REG_OpMode + SX1276_SPI_WRITE_MASK, SX1276_OPMODE_TX);
+  delayMicroseconds(SPI_CS_DELAY_US);
 #if VERBOSE_W
   DEBUG("[W] %02x <-- %02x\n\r", SX1276REG_FifoAddrPtr, FIFO_START);
   DEBUG("[WB] %02x <-- (%d bytes)\n\r", SX1276REG_Fifo, len);
@@ -535,7 +536,9 @@ bool SX1276Radio::TransmitMessage(const void *payload, byte len, bool withStandb
     if (tPollStart > (toa + TOA_TX_MARGIN_MS)) { break; }
     delayMicroseconds(SPI_CS_DELAY_US);
   } while (true);
+  delayMicroseconds(SPI_CS_DELAY_US);
   DoRegister(SX1276REG_IrqFlags + SX1276_SPI_WRITE_MASK, 0xff);
+  delayMicroseconds(SPI_CS_DELAY_US);
   SPI.endTransaction();
 #if VERBOSE_R
   DEBUG("[R] %02x --> %02x\n\r", SX1276REG_IrqFlags, v);
