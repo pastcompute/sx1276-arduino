@@ -289,7 +289,7 @@ bool SX1276Radio::Begin()
     // maybe the rubber duckies are no good?
     // boost on and signal is too powerful when at max
     // Close range rx rssi ~ -30 to -40 (power -6) to -45 (power -12) to -48 (power -15)
-    WriteRegister(SX1276REG_PaConfig, 0xf1); // inAir9b - max power, enable the boost, backoff max to 1 (almost lowest power)
+    WriteRegister(SX1276REG_PaConfig, 0xf3); // inAir9b - max power, enable the boost, backoff max to 1 (almost lowest power)
     WriteRegister(SX1276REG_PaDac, 0x87);
   } else {
     WriteRegister(SX1276REG_PaConfig, 0x7f); // max power, no boost is available
