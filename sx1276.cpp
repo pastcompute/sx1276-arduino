@@ -598,7 +598,6 @@ bool SX1276Radio::ReceiveMessage(byte buffer[], byte size, byte& received, bool&
 
   ClearInterrupts();
 
-  bool isSingleMode = true;
   WriteRegister(SX1276REG_OpMode, SX1276_OPMODE_RXSINGLE); // RX Single mode
 
   // Now we block, until symbol timeout or we get a message
@@ -631,15 +630,22 @@ bool SX1276Radio::ReceiveMessage(byte buffer[], byte size, byte& received, bool&
       }
     }
   } while (!symbol_timeout && !shouldAbort);
+  if (!done) { return false; }
+  return ReceiveComplete(buffer, size, flags, received, crc_error);
+}
 
+ICACHE_FLASH_ATTR
+bool SX1276Radio::ReceiveComplete(byte buffer[], byte size, bool flags, byte& received, bool& crc_error)
+{
+  bool crcErrorDetected = !!(flags & (1 << 5));
+  crc_error = crcErrorDetected; // we could return now if true, but get stats for debugging
+
+  bool isSingleMode = true;
   byte v = 0;
   byte stat = 0;
 
   rssi_dbm_ = -255;
   rx_snr_db_ = -255;
-  ReadRegister(SX1276REG_Rssi, v); rssi_dbm_ = -157 + v;
-
-  if (!done) { return false; }
 
   int rssi_packet = 255;
   int snr_packet = -255;
@@ -647,6 +653,8 @@ bool SX1276Radio::ReceiveMessage(byte buffer[], byte size, byte& received, bool&
 
 #if 0
   SPI.beginTransaction(spi_settings_);
+  DoRegister(SX1276REG_Rssi, v); rssi_dbm_ = -157 + v;
+  delayMicroseconds(SPI_CS_DELAY_US);
   DoRegister(SX1276REG_PacketRssi, v); rssi_packet = -157 + v;
   delayMicroseconds(SPI_CS_DELAY_US);
   DoRegister(SX1276REG_PacketSnr, v); snr_packet = (v & 0x80 ? int(v) - 256 : v) / 4; // 2's comp div 4? really?
@@ -655,6 +663,7 @@ bool SX1276Radio::ReceiveMessage(byte buffer[], byte size, byte& received, bool&
   delayMicroseconds(SPI_CS_DELAY_US);
   //SPI.endTransaction();
 #else
+  ReadRegister(SX1276REG_Rssi, v); rssi_dbm_ = -157 + v;
   ReadRegister(SX1276REG_PacketRssi, v); rssi_packet = -157 + v;
   ReadRegister(SX1276REG_PacketSnr, v); snr_packet = (v & 0x80 ? int(v) - 256 : v) / 4; // 2's comp div 4? really?
   ReadRegister(SX1276REG_ModemStat, stat);
@@ -703,7 +712,6 @@ bool SX1276Radio::ReceiveMessage(byte buffer[], byte size, byte& received, bool&
   // payloadSizeBytes--; // DONT KNOW WHY, I THINK FifoRxNbBytes points 1 down
 #endif
 
-  bool crcErrorDetected = !!(flags & (1 << 5));
   bool overflow = (int)payloadSizeBytes > size;
 
   if (!crcErrorDetected && !overflow) {

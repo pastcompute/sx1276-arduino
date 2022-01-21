@@ -129,6 +129,7 @@ private:
   void ConfigureSpreadingFactor();
   void ConfigureGain();
   void ReceiveInit();
+  bool ReceiveComplete(byte buffer[], byte size, bool flags, byte& received, bool& crc_error);
 
   // module settings
   int cs_pin_;
