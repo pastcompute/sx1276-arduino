@@ -673,30 +673,36 @@ bool SX1276Radio::ReceiveMessage(byte buffer[], byte size, byte& received, bool&
 
   payloadSizeBytes--; // DONT KNOW WHY, I THINK FifoRxNbBytes points 1 down
 
+  bool crcErrorDetected = !!(flags & (1 << 5));
+  bool overflow = (int)payloadSizeBytes > size;
+
+  if (!crcErrorDetected && !overflow) {
+    for (unsigned n=0; n < payloadSizeBytes; n++) {
+      ReadRegister(SX1276REG_Fifo, v);
+      buffer[n] = v;
+    }
+    received = payloadSizeBytes;
+  }
+
   DEBUG("[DBUG] ");
   DEBUG("RX rssi_pkt=%d ", rssi_packet);
   DEBUG("snr_pkt=%d ", snr_packet);
   DEBUG("stat=%02x ", (unsigned)stat);
   DEBUG("sz=%d ", (unsigned)payloadSizeBytes);
   DEBUG("ptr=%d ", (unsigned)byptr);
+  DEBUG("errors=%d,%d ", crcErrorDetected, overflow);
   DEBUG("hdrcnt=%d pktcnt=%d\n\r", (unsigned)headerCount, (unsigned)packetCount);
 
   // check CRC ...
-  if (!!(flags & (1 << 5))) {
+  if (crcErrorDetected) {
     DEBUG("CRC Error. Packet rssi=%ddBm snr=%d cr=4/%d\n\r", rssi_packet, snr_packet, coding_rate);
-    crc_error = true;
     return false;
   }
 
-  if ((int)payloadSizeBytes > size) {
+  if (overflow) {
     DEBUG("Buffer size %d not large enough for packet size %d!\n\r", size, (int)payloadSizeBytes);
     return false;
   }
 
-  for (unsigned n=0; n < payloadSizeBytes; n++) {
-    ReadRegister(SX1276REG_Fifo, v);
-    buffer[n] = v;
-  }
-  received = payloadSizeBytes;
   return true;
 }
