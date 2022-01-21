@@ -644,9 +644,21 @@ bool SX1276Radio::ReceiveMessage(byte buffer[], byte size, byte& received, bool&
   int rssi_packet = 255;
   int snr_packet = -255;
   int coding_rate = 0;
+
+#if 0
+  SPI.beginTransaction(spi_settings_);
+  DoRegister(SX1276REG_PacketRssi, v); rssi_packet = -157 + v;
+  delayMicroseconds(SPI_CS_DELAY_US);
+  DoRegister(SX1276REG_PacketSnr, v); snr_packet = (v & 0x80 ? int(v) - 256 : v) / 4; // 2's comp div 4? really?
+  delayMicroseconds(SPI_CS_DELAY_US);
+  DoRegister(SX1276REG_ModemStat, stat); rssi_packet = -157 + v;
+  delayMicroseconds(SPI_CS_DELAY_US);
+  //SPI.endTransaction();
+#else
   ReadRegister(SX1276REG_PacketRssi, v); rssi_packet = -157 + v;
   ReadRegister(SX1276REG_PacketSnr, v); snr_packet = (v & 0x80 ? int(v) - 256 : v) / 4; // 2's comp div 4? really?
   ReadRegister(SX1276REG_ModemStat, stat);
+#endif
   coding_rate = stat >> 5;
   switch (coding_rate) {
     case 0x1: coding_rate = 5; break;
@@ -661,6 +673,22 @@ bool SX1276Radio::ReceiveMessage(byte buffer[], byte size, byte& received, bool&
   uint16_t headerCount = 0;
   uint16_t packetCount = 0;
   uint8_t byptr = 0;
+#if 0
+  DoRegister(SX1276REG_FifoRxNbBytes, payloadSizeBytes);
+  delayMicroseconds(SPI_CS_DELAY_US);
+  DoRegister(X1276REG_RxHeaderCntValueMsb, v); headerCount = (uint16_t)v << 8;
+  delayMicroseconds(SPI_CS_DELAY_US);
+  DoRegister(SX1276REG_RxHeaderCntValueLsb, v); headerCount |= v;
+  delayMicroseconds(SPI_CS_DELAY_US);
+  if (!isSingleMode) {
+    DoRegister(SX1276REG_RxPacketCntValueMsb, v); packetCount = (uint16_t)v << 8;
+    delayMicroseconds(SPI_CS_DELAY_US);
+    DoRegister(SX1276REG_RxPacketCntValueLsb, v); packetCount |= v;
+    delayMicroseconds(SPI_CS_DELAY_US);
+  }
+  // Note: SX1276REG_FifoRxByteAddrPtr == last addr written by modem
+  DoRegister(SX1276REG_FifoRxByteAddrPtr, byptr);
+#else
   ReadRegister(SX1276REG_FifoRxNbBytes, payloadSizeBytes);
   ReadRegister(SX1276REG_RxHeaderCntValueMsb, v); headerCount = (uint16_t)v << 8;
   ReadRegister(SX1276REG_RxHeaderCntValueLsb, v); headerCount |= v;
@@ -673,18 +701,26 @@ bool SX1276Radio::ReceiveMessage(byte buffer[], byte size, byte& received, bool&
 
   // This might explain the lost byte?
   // payloadSizeBytes--; // DONT KNOW WHY, I THINK FifoRxNbBytes points 1 down
+#endif
 
   bool crcErrorDetected = !!(flags & (1 << 5));
   bool overflow = (int)payloadSizeBytes > size;
 
   if (!crcErrorDetected && !overflow) {
     for (unsigned n=0; n < payloadSizeBytes; n++) {
+#if 0
+      DoRegister(SX1276REG_Fifo, v);
+      delayMicroseconds(SPI_CS_DELAY_US);
+#else
       ReadRegister(SX1276REG_Fifo, v);
+#endif
       buffer[n] = v;
     }
     received = payloadSizeBytes;
   }
-
+#if 0
+  SPI.endTransaction();
+#endif
   DEBUG("[DBUG] ");
   DEBUG("RX rssi_pkt=%d ", rssi_packet);
   DEBUG("snr_pkt=%d ", snr_packet);
