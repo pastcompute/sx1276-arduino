@@ -671,7 +671,8 @@ bool SX1276Radio::ReceiveMessage(byte buffer[], byte size, byte& received, bool&
   // Note: SX1276REG_FifoRxByteAddrPtr == last addr written by modem
   ReadRegister(SX1276REG_FifoRxByteAddrPtr, byptr);
 
-  payloadSizeBytes--; // DONT KNOW WHY, I THINK FifoRxNbBytes points 1 down
+  // This might explain the lost byte?
+  // payloadSizeBytes--; // DONT KNOW WHY, I THINK FifoRxNbBytes points 1 down
 
   bool crcErrorDetected = !!(flags & (1 << 5));
   bool overflow = (int)payloadSizeBytes > size;
